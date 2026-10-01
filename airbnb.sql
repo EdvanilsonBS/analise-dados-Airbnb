@@ -172,12 +172,13 @@ LEFT JOIN dw_Airbnb.dim_tipo_imovel ti ON ti.tipo_imovel = l.room_type;
 SELECT * FROM dw_Airbnb.fato_avaliacoes;
 
 --Quais bairros têm poucos imóveis e alta demanda?
--- 1.Passo Mapeamento da Oferta (oferta): Conta quantos imóveis ativos existem em cada bairro.
+-- 1.Passo: Mapeamento da Oferta (oferta): Conta quantos imóveis ativos existem em cada bairro.
 WITH oferta AS (
     SELECT neighbourhood AS bairro, COUNT(*) AS qtd_imoveis
     FROM listings
     GROUP BY neighbourhood
 ),
+--2.Passo: Mapeamento da Demanda (demanda): Soma quantas avaliações os imóveis de cada bairro receberam nos últimos 12 meses (usando a avaliação como indicador direto de reserva/ocupação).
 demanda AS (
     SELECT b.bairro, COUNT(*) AS avaliacoes_12m
     FROM dw_Airbnb.fato_avaliacoes f
@@ -186,6 +187,9 @@ demanda AS (
     WHERE t.data > (SELECT MAX(data) FROM dw_Airbnb.dim_tempo) - INTERVAL '12 months'
     GROUP BY b.bairro
 ),
+-- 3.Passo: Indicador de Pressão (calculo):
+--1. Filtra apenas bairros com pelo menos 15 imóveis (relevância estatística).
+--2. Cria a métrica central: Avaliações por Imóvel ($\frac{\text{Avaliações}}{\text{Imóveis}}$). Se um bairro tem 100 avaliações e 10 imóveis, cada imóvel teve média de 10 reservas no ano.
 calculo AS (
     SELECT o.bairro,
            o.qtd_imoveis,
@@ -195,11 +199,14 @@ calculo AS (
     LEFT JOIN demanda d USING (bairro)
     WHERE o.qtd_imoveis >= 10
 ),
+--4.Passo: Linha de Corte Dinâmica (medianas): Calcula a mediana da cidade para a quantidade de imóveis e para a demanda por imóvel. 
+	--Usar a mediana (em vez da média) evita que bairros gigantes como Copacabana distorçam o padrão do resto da cidade.
 medianas AS (
     SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY qtd_imoveis)           AS med_oferta,
            PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY avaliacoes_por_imovel) AS med_demanda
     FROM calculo
 )
+--5.Passo: Matriz de Decisão (CASE WHEN): Compara cada bairro contra as medianas e o encaixa em 4 cenários:
 SELECT c.bairro AS "Bairro",
        TRANSLATE(TO_CHAR(c.qtd_imoveis, 'FM999,999,990'), ',', '.') AS "Imóveis",
        TRANSLATE(TO_CHAR(c.avaliacoes_12m, 'FM999,999,990'), ',', '.') AS "Avaliações (12 meses)",
