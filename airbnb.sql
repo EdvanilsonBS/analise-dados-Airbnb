@@ -172,7 +172,7 @@ LEFT JOIN dw_Airbnb.dim_tipo_imovel ti ON ti.tipo_imovel = l.room_type;
 SELECT * FROM dw_Airbnb.fato_avaliacoes;
 
 --Quais bairros têm poucos imóveis e alta demanda?
-
+-- 1.Passo Mapeamento da Oferta (oferta): Conta quantos imóveis ativos existem em cada bairro.
 WITH oferta AS (
     SELECT neighbourhood AS bairro, COUNT(*) AS qtd_imoveis
     FROM listings
