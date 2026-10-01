@@ -188,7 +188,7 @@ demanda AS (
     GROUP BY b.bairro
 ),
 -- 3.Passo: Indicador de Pressão (calculo):
---1. Filtra apenas bairros com pelo menos 15 imóveis (relevância estatística).
+--1. Filtra apenas bairros com pelo menos 10 imóveis (relevância estatística).
 --2. Cria a métrica central: Avaliações por Imóvel ($\frac{\text{Avaliações}}{\text{Imóveis}}$). Se um bairro tem 100 avaliações e 10 imóveis, cada imóvel teve média de 10 reservas no ano.
 calculo AS (
     SELECT o.bairro,
@@ -226,12 +226,13 @@ ORDER BY c.avaliacoes_por_imovel DESC
 LIMIT 15;
 
 --Quais bairros concentram imóveis de alto valor?
-
+-- 1.Passo Define a régua de luxo: top 25% mais caros da cidade (Percentil 75)
 WITH corte AS (
     SELECT PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY price) AS p75
     FROM listings
     WHERE price > 0
 ),
+-- 2. Consolida as estatísticas por bairro e conta os imóveis de alto valor
 calculo AS (
     SELECT l.neighbourhood AS bairro,
            COUNT(*) AS qtd_imoveis,
@@ -244,6 +245,7 @@ calculo AS (
     GROUP BY l.neighbourhood
     HAVING COUNT(*) >= 10
 )
+-- 3. Formata os dados para apresentação e ordena pela proporção de luxo
 SELECT bairro AS "Bairro",
        TRANSLATE(TO_CHAR(qtd_imoveis, 'FM999,999,990'), ',', '.') AS "Imóveis",
        'R$ ' || TRANSLATE(TO_CHAR(preco_mediano, 'FM999,999,990.00'), ',.', '.,') AS "Preço mediano",
@@ -251,16 +253,17 @@ SELECT bairro AS "Bairro",
        TRANSLATE(TO_CHAR(qtd_alto_valor, 'FM999,999,990'), ',', '.') AS "Quantidade Imóveis de alto valor",
        TRANSLATE(TO_CHAR(100.0 * qtd_alto_valor / qtd_imoveis, 'FM990.0'), '.', ',') || '%'  AS "pct_alto_valor %"
 FROM calculo
-ORDER BY qtd_alto_valor::numeric / qtd_imoveis DESC
+ORDER BY (qtd_alto_valor::numeric / qtd_imoveis) DESC
 LIMIT 15;
 
 --Existe concentração geográfica de determinados tipos de imóveis?
-
+-- 1.Passo: Agrupa e conta a quantidade de imóveis por bairro e tipo
 WITH por_bairro AS (
     SELECT neighbourhood AS bairro, room_type, COUNT(*) AS qtd
     FROM listings
     GROUP BY neighbourhood, room_type
 ),
+-- 2.Passo: Aplica Window Functions para calcular o % no bairro e o Quociente Locacional (QL)
 calculo AS (
     SELECT bairro,
            room_type,
@@ -270,6 +273,7 @@ calculo AS (
            (SUM(qtd) OVER (PARTITION BY room_type)::numeric / SUM(qtd) OVER ()) AS ql
     FROM por_bairro
 )
+-- 3.Passo: Traduz os termos, formata números e classifica a intensidade da concentração 
 SELECT bairro AS "Bairro",
        CASE room_type
             WHEN 'Entire home/apt' THEN 'Casa/apartamento inteiro'
@@ -290,7 +294,7 @@ ORDER BY ql DESC
 LIMIT 15;
 
 --Quais regiões apresentam oportunidade de expansão?
-
+-- 1. Agrupa oferta e preço mediano por bairro
 WITH oferta AS (
     SELECT neighbourhood AS bairro,
            COUNT(*) AS qtd_imoveis,
@@ -300,6 +304,7 @@ WITH oferta AS (
     GROUP BY neighbourhood
     HAVING COUNT(*) >= 10
 ),
+-- 2. Soma as avaliações dos últimos 12 meses
 demanda AS (
     SELECT b.bairro, COUNT(*) AS avaliacoes_12m
     FROM dw_Airbnb.fato_avaliacoes f
@@ -308,6 +313,7 @@ demanda AS (
     WHERE t.data > (SELECT MAX(data) FROM dw_Airbnb.dim_tempo) - INTERVAL '12 months'
     GROUP BY b.bairro
 ),
+-- 3. Consolida e calcula o indicador de pressão de demanda
 base AS (
     SELECT o.bairro,
            o.qtd_imoveis,
@@ -316,6 +322,7 @@ base AS (
     FROM oferta o
     LEFT JOIN demanda d USING (bairro)
 ),
+-- 4. Normaliza as variáveis em percentis (0 a 1) e calcula a Nota Média
 calculo AS (
     SELECT bairro, qtd_imoveis, preco_mediano, avaliacoes_por_imovel,
            (PERCENT_RANK() OVER (ORDER BY avaliacoes_por_imovel)
@@ -323,6 +330,7 @@ calculo AS (
           + PERCENT_RANK() OVER (ORDER BY preco_mediano))::numeric / 3 AS nota
     FROM base
 )
+-- 5. Apresenta o ranking final formatado e classificado por prioridade
 SELECT bairro AS "Bairro",
        TRANSLATE(TO_CHAR(qtd_imoveis, 'FM999,999,990'), ',', '.') AS "Imóveis",
        TRANSLATE(TO_CHAR(avaliacoes_por_imovel, 'FM999,990.0'), ',.', '.,') AS "Avaliações por imóvel",
